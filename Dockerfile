@@ -1,35 +1,33 @@
-ARG PYTHON_VERSION=3.12
+FROM python:3.10-slim
 
-FROM python:$PYTHON_VERSION-slim AS build
+# Установка зависимостей и Xray-core
+RUN apt-get update && apt-get install -y curl wget unzip sqlite3 && \
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install && \
+    rm -rf /var/lib/apt/lists/*
 
-ENV PYTHONUNBUFFERED=1
+# Рабочая директория
+WORKDIR /app
 
-WORKDIR /code
+# Копирование файлов проекта
+COPY . .
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl unzip gcc python3-dev libpq-dev \
-    && curl -L https://github.com/Gozargah/Marzban-scripts/raw/master/install_latest_xray.sh | bash \
-    && rm -rf /var/lib/apt/lists/*
+# Установка Python-зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ./requirements.txt /code/
-RUN python3 -m pip install --upgrade pip setuptools \
-    && pip install --no-cache-dir --upgrade -r /code/requirements.txt
+# Создание директорий для persistent data (будет монтироваться)
+RUN mkdir -p /var/lib/marzban /etc/marzban
 
-FROM python:$PYTHON_VERSION-slim
+# Экспонирование портов: 8000 для панели, добавьте порты Xray (например, 443 для inbound)
+EXPOSE 8000 443
 
-ENV PYTHON_LIB_PATH=/usr/local/lib/python${PYTHON_VERSION%.*}/site-packages
-WORKDIR /code
+# Environment variables по умолчанию (переопределим в Choreo)
+ENV UVICORN_HOST=0.0.0.0
+ENV UVICORN_PORT=8000
+ENV XRAY_EXECUTABLE_PATH=/usr/local/bin/xray
+ENV XRAY_ASSETS_PATH=/usr/local/share/xray
+ENV SQLALCHEMY_DATABASE_URL=sqlite:////var/lib/marzban/marzban.db
+ENV SUDO_USERNAME=admin
+ENV SUDO_PASSWORD=your_secure_password  # Измените!
 
-RUN rm -rf $PYTHON_LIB_PATH/*
-
-COPY --from=build $PYTHON_LIB_PATH $PYTHON_LIB_PATH
-COPY --from=build /usr/local/bin /usr/local/bin
-COPY --from=build /usr/local/share/xray /usr/local/share/xray
-
-COPY . /code
-
-RUN ln -s /code/marzban-cli.py /usr/bin/marzban-cli \
-    && chmod +x /usr/bin/marzban-cli \
-    && marzban-cli completion install --shell bash
-
-CMD ["bash", "-c", "alembic upgrade head; python main.py"]
+# Запуск Marzban (с Xray интеграцией)
+CMD ["uvicorn", "app.main:app", "--host", "\( {UVICORN_HOST}", "--port", " \){UVICORN_PORT}"]
